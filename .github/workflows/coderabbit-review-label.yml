@@ -23,7 +23,7 @@ jobs:
             const repo = context.repo;
 
             // Only apply labeling for CodeRabbit
-            if (reviewer !== 'coderabbit-ai') return;
+            if (reviewer !== 'coderabbitai') return;
 
             const labelMap = {
               approved: { add: 'crai-approved', remove: ['crai-changes-requested', 'crai-needs-review'] },
