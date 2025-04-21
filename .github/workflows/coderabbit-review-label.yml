@@ -1,0 +1,67 @@
+name: Label PR review outcome
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  update-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Update label based on CodeRabbit review state
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const review = context.payload.review;
+            const reviewer = review.user.login.toLowerCase();
+            const reviewState = review.state.toLowerCase();
+            const pr = context.payload.pull_request;
+            const repo = context.repo;
+
+            // Only apply labeling for CodeRabbit
+            if (reviewer !== 'coderabbit-ai') return;
+
+            const labelMap = {
+              approved: { add: 'crai-approved', remove: ['crai-changes-requested', 'crai-needs-review'] },
+              changes_requested: { add: 'crai-changes-requested', remove: ['crai-approved', 'crai-needs-review'] },
+              commented: { add: 'crai-needs-review', remove: ['crai-approved', 'crai-changes-requested'] },
+              pending: { add: 'crai-needs-review', remove: ['crai-approved', 'crai-changes-requested'] },
+              dismissed: { add: null, remove: ['crai-approved', 'crai-changes-requested', 'crai-needs-review'] }
+            };
+
+            const action = labelMap[reviewState];
+            if (!action) return;
+
+            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+              owner: repo.owner,
+              repo: repo.repo,
+              issue_number: pr.number
+            });
+
+            const current = currentLabels.map(label => label.name);
+
+            // Remove old crai-* labels
+            for (const label of action.remove) {
+              if (current.includes(label)) {
+                await github.rest.issues.removeLabel({
+                  owner: repo.owner,
+                  repo: repo.repo,
+                  issue_number: pr.number,
+                  name: label
+                });
+              }
+            }
+
+            // Add the new crai-* label if not already present
+            if (action.add && !current.includes(action.add)) {
+              await github.rest.issues.addLabels({
+                owner: repo.owner,
+                repo: repo.repo,
+                issue_number: pr.number,
+                labels: [action.add]
+              });
+            }
