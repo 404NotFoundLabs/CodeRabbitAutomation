@@ -1,0 +1,42 @@
+name: Queue PR for Review
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  queue-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Add PR to review queue
+        env:
+          GIST_ID_QUEUE: ${{ secrets.GIST_ID_QUEUE }}
+          GITHUB_TOKEN: ${{ secrets.GOWREESH_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "Fetching existing queue..."
+          curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/gists/$GIST_ID_QUEUE > gist_queue.json
+
+          # Read current queue from Gist
+          QUEUE=$(jq -r '.files["queue.json"].content' gist_queue.json | jq '.')
+
+          # Prepare new PR entry
+          NEW_ENTRY=$(jq -n --arg repo "$REPO" --arg pr "$PR_NUMBER" --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            '{repo: $repo, pr: ($pr | tonumber), created_at: $now}')
+
+          # Append new PR to queue
+          UPDATED_QUEUE=$(echo "$QUEUE" | jq ". + [ $NEW_ENTRY ]")
+
+          # Save updated queue to temp file
+          echo "$UPDATED_QUEUE" > queue.json
+
+          # Update Gist with new queue
+          echo "Updating Gist with new queue..."
+          curl -s -X PATCH -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg content "$(cat queue.json | jq -Rs .)" '{files: {"queue.json": {"content": $content}}}')" \
+            https://api.github.com/gists/$GIST_ID_QUEUE
