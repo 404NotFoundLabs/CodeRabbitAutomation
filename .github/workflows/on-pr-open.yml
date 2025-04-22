@@ -2,7 +2,7 @@ name: Queue PR for Review
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [opened]
 
 jobs:
   queue-pr:
@@ -15,20 +15,40 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # Fetch the Gist content
+          echo "Fetching Gist content..."
           curl -s -H "Authorization: token $GH_PAT" https://api.github.com/gists/$GIST_ID_QUEUE > gist.json
-          QUEUE=$(jq -r '.files["queue.json"].content' gist.json | jq '.')
 
+          # Check if the "queue.json" file exists and initialize if necessary
+          QUEUE_CONTENT=$(jq -r '.files["queue.json"].content // ""' gist.json)
+
+          # If the queue.json content is empty or null, initialize it with an empty array
+          if [ -z "$QUEUE_CONTENT" ] || [ "$QUEUE_CONTENT" == "null" ]; then
+            echo "queue.json is empty or doesn't exist. Initializing with an empty array."
+            QUEUE="[]"
+          else
+            QUEUE=$(echo "$QUEUE_CONTENT" | jq '.')
+          fi
+
+          # Check if the PR already exists in the queue
           EXISTS=$(echo "$QUEUE" | jq "[.[] | select(.pr == \"$PR_NUMBER\" and .repo == \"$REPO\")] | length")
+
           if [ "$EXISTS" -ne 0 ]; then
             echo "PR already in queue."
             exit 0
           fi
 
+          # Add the new PR to the queue
           UPDATED_QUEUE=$(echo "$QUEUE" | jq ". + [{\"pr\": \"$PR_NUMBER\", \"repo\": \"$REPO\"}]")
+
+          # Save the updated queue to a file
           echo "$UPDATED_QUEUE" > updated-queue.json
 
+          # Update the Gist with the new queue
           curl -s -X PATCH -H "Authorization: token $GH_PAT" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg content "$(cat updated-queue.json | jq -Rs .)" \
               '{files: {"queue.json": {"content": $content}}}')" \
             https://api.github.com/gists/$GIST_ID_QUEUE
+
+          echo "Queue updated successfully!"
