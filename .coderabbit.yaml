@@ -12,8 +12,8 @@ reviews:
   sequence_diagrams: true #Generate sequence diagrams in the walkthrough.
   auto_apply_labels: true #Automatically apply the suggested labels to the PR/MR.
   auto_review:
-    enabled: false
-    auto_incremental_review: false #Automatic Incremental Review | Automatic incremental code review on each push
+    enabled: true
+    auto_incremental_review: true #Automatic Incremental Review | Automatic incremental code review on each push
     drafts: false
 chat:
   auto_reply: true
