@@ -16,10 +16,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           curl -s -H "Authorization: token $GH_PAT" https://api.github.com/gists/$GIST_ID_QUEUE > gist.json
-
           QUEUE=$(jq -r '.files["queue.json"].content' gist.json | jq '.')
 
-          # Check for duplicates
           EXISTS=$(echo "$QUEUE" | jq "[.[] | select(.pr == \"$PR_NUMBER\" and .repo == \"$REPO\")] | length")
           if [ "$EXISTS" -ne 0 ]; then
             echo "PR already in queue."
