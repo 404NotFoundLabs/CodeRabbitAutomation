@@ -15,16 +15,14 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # Fetch the Gist content
           echo "Fetching Gist content..."
           curl -s -H "Authorization: token $GH_PAT" https://api.github.com/gists/$GIST_ID_QUEUE > gist.json
 
-          # Check if the "queue.json" file exists and initialize if necessary
+          # Try to extract the content of queue.json, fallback to empty string if it doesn't exist
           QUEUE_CONTENT=$(jq -r '.files["queue.json"].content // ""' gist.json)
 
-          # If the queue.json content is empty or null, initialize it with an empty array
           if [ -z "$QUEUE_CONTENT" ] || [ "$QUEUE_CONTENT" == "null" ]; then
-            echo "queue.json is empty or doesn't exist. Initializing with an empty array."
+            echo "queue.json is missing or empty. Initializing with an empty array."
             QUEUE="[]"
           else
             QUEUE=$(echo "$QUEUE_CONTENT" | jq '.')
@@ -40,8 +38,6 @@ jobs:
 
           # Add the new PR to the queue
           UPDATED_QUEUE=$(echo "$QUEUE" | jq ". + [{\"pr\": \"$PR_NUMBER\", \"repo\": \"$REPO\"}]")
-
-          # Save the updated queue to a file
           echo "$UPDATED_QUEUE" > updated-queue.json
 
           # Update the Gist with the new queue
