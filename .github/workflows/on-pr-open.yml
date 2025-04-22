@@ -2,41 +2,35 @@ name: Queue PR for Review
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, reopened]
 
 jobs:
   queue-pr:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-
     steps:
-      - name: Add PR to review queue
+      - name: Add PR to queue
         env:
+          GH_PAT: ${{ secrets.GOWRESSH_TOKEN }}
           GIST_ID_QUEUE: ${{ secrets.GIST_ID_QUEUE }}
-          GITHUB_TOKEN: ${{ secrets.GOWREESH_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          echo "Fetching existing queue..."
-          curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/gists/$GIST_ID_QUEUE > gist_queue.json
+          curl -s -H "Authorization: token $GH_PAT" https://api.github.com/gists/$GIST_ID_QUEUE > gist.json
 
-          # Read current queue from Gist
-          QUEUE=$(jq -r '.files["queue.json"].content' gist_queue.json | jq '.')
+          QUEUE=$(jq -r '.files["queue.json"].content' gist.json | jq '.')
 
-          # Prepare new PR entry
-          NEW_ENTRY=$(jq -n --arg repo "$REPO" --arg pr "$PR_NUMBER" --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-            '{repo: $repo, pr: ($pr | tonumber), created_at: $now}')
+          # Check for duplicates
+          EXISTS=$(echo "$QUEUE" | jq "[.[] | select(.pr == \"$PR_NUMBER\" and .repo == \"$REPO\")] | length")
+          if [ "$EXISTS" -ne 0 ]; then
+            echo "PR already in queue."
+            exit 0
+          fi
 
-          # Append new PR to queue
-          UPDATED_QUEUE=$(echo "$QUEUE" | jq ". + [ $NEW_ENTRY ]")
+          UPDATED_QUEUE=$(echo "$QUEUE" | jq ". + [{\"pr\": \"$PR_NUMBER\", \"repo\": \"$REPO\"}]")
+          echo "$UPDATED_QUEUE" > updated-queue.json
 
-          # Save updated queue to temp file
-          echo "$UPDATED_QUEUE" > queue.json
-
-          # Update Gist with new queue
-          echo "Updating Gist with new queue..."
-          curl -s -X PATCH -H "Authorization: token $GITHUB_TOKEN" \
+          curl -s -X PATCH -H "Authorization: token $GH_PAT" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg content "$(cat queue.json | jq -Rs .)" '{files: {"queue.json": {"content": $content}}}')" \
+            -d "$(jq -n --arg content "$(cat updated-queue.json | jq -Rs .)" \
+              '{files: {"queue.json": {"content": $content}}}')" \
             https://api.github.com/gists/$GIST_ID_QUEUE

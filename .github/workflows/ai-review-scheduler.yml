@@ -1,78 +1,76 @@
-# name: Review PRs Scheduler
+name: Review PRs Scheduler
 
-# on:
-#   schedule:
-#     - cron: '*/15 * * * *'
+on:
+  schedule:
+    - cron: '*/15 * * * *'
 
-# jobs:
-#   trigger-review:
-#     runs-on: ubuntu-latest
-#     permissions:
-#       pull-requests: write
+jobs:
+  trigger-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Process Review Queue
+        env:
+          GH_PAT: ${{ secrets.GOWREESH_TOKEN }}
+          GIST_ID_QUEUE: ${{ secrets.GIST_ID_QUEUE }}
+          GIST_ID_REVIEW_HISTORY: ${{ secrets.GIST_ID_REVIEW_HISTORY }}
+        run: |
+          echo "Fetching queue and review history..."
+          curl -s -H "Authorization: token $GH_PAT" https://api.github.com/gists/$GIST_ID_QUEUE > gist_queue.json
+          curl -s -H "Authorization: token $GH_PAT" https://api.github.com/gists/$GIST_ID_REVIEW_HISTORY > gist_history.json
 
-#     steps:
-#       - name: Fetch Review Queue from Gist
-#         env:
-#           GIST_ID_QUEUE: ${{ secrets.GIST_ID_QUEUE }}
-#           GIST_ID_REVIEW_HISTORY: ${{ secrets.GIST_ID_REVIEW_HISTORY }}
-#           GITHUB_TOKEN: ${{ secrets.GOWREESH_TOKEN }}
-#         run: |
-#           # Fetch the existing queue and review history from the Gists
-#           echo "Fetching queue from Gist..."
-#           curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/gists/$GIST_ID_QUEUE > gist_queue.json
-#           curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/gists/$GIST_ID_REVIEW_HISTORY > gist_review_history.json
+          QUEUE=$(jq -r '.files["queue.json"].content' gist_queue.json | jq '.')
+          HISTORY=$(jq -r '.files["review-history.json"].content' gist_history.json | jq '.')
 
-#           # Get queue content and review history
-#           QUEUE=$(jq -r '.files["queue.json"].content' gist_queue.json | jq '.')
-#           REVIEW_HISTORY=$(jq -r '.files["review-history.json"].content' gist_review_history.json | jq '.')
+          # Calculate time bounds
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          ONE_HOUR_AGO=$(date -u -d "1 hour ago" +"%Y-%m-%dT%H:%M:%SZ")
 
-#           # Filter out PRs that are too old (more than 1 hour ago)
-#           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-#           ONE_HOUR_AGO=$(date -u -d "1 hour ago" +"%Y-%m-%dT%H:%M:%SZ")
-#           QUEUE=$(echo "$QUEUE" | jq "[.[] | select(.created_at >= \"$ONE_HOUR_AGO\")]")
+          # Filter review history for last hour
+          RECENT_REVIEWS=$(echo "$HISTORY" | jq "[.[] | select(.timestamp >= \"$ONE_HOUR_AGO\")]")
+          COUNT=$(echo "$RECENT_REVIEWS" | jq length)
 
-#           # Check how many reviews were done in the last hour
-#           REVIEWS_IN_LAST_HOUR=$(echo "$REVIEW_HISTORY" | jq "[.[] | select(.timestamp >= \"$ONE_HOUR_AGO\")] | length")
+          echo "Reviews in the last hour: $COUNT"
 
-#           if [ "$REVIEWS_IN_LAST_HOUR" -lt 4 ]; then
-#             # We can post a new review
-#             PR_TO_REVIEW=$(echo "$QUEUE" | jq '.[0]')
+          if [ "$COUNT" -ge 4 ]; then
+            echo "Rate limit reached. Exiting."
+            exit 0
+          fi
 
-#             if [ "$PR_TO_REVIEW" != "null" ]; then
-#               REPO=$(echo "$PR_TO_REVIEW" | jq -r '.repo')
-#               PR_NUMBER=$(echo "$PR_TO_REVIEW" | jq -r '.pr')
+          # Pick next PR
+          PR_TO_REVIEW=$(echo "$QUEUE" | jq '.[0]')
+          if [ "$PR_TO_REVIEW" == "null" ]; then
+            echo "No PRs to review."
+            exit 0
+          fi
 
-#               # Post the review
-#               COMMENT_BODY="@coderabbitai review"
-#               echo "Posting comment for PR #$PR_NUMBER in $REPO..."
+          REPO=$(echo "$PR_TO_REVIEW" | jq -r '.repo')
+          PR_NUMBER=$(echo "$PR_TO_REVIEW" | jq -r '.pr')
 
-#               curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
-#                 -H "Content-Type: application/json" \
-#                 -d '{"body": "'"$COMMENT_BODY"'"}' \
-#                 "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments"
+          echo "Reviewing PR #$PR_NUMBER from $REPO"
 
-#               # Add this review to the review history
-#               NEW_REVIEW=$(jq -n --arg pr "$PR_NUMBER" --arg timestamp "$NOW" \
-#                 '{pr: $pr, timestamp: $timestamp}')
+          # Post review comment
+          curl -s -X POST -H "Authorization: token $GH_PAT" \
+            -H "Content-Type: application/json" \
+            -d '{"body": "@coderabbitai review"}' \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments"
 
-#               UPDATED_HISTORY=$(echo "$REVIEW_HISTORY" | jq ". + [ $NEW_REVIEW ]")
-#               echo "$UPDATED_HISTORY" > review-history.json
+          # Update review history
+          NEW_REVIEW=$(jq -n --arg pr "$PR_NUMBER" --arg timestamp "$NOW" '{pr: $pr, timestamp: $timestamp}')
+          UPDATED_HISTORY=$(echo "$HISTORY" | jq ". + [ $NEW_REVIEW ]")
+          echo "$UPDATED_HISTORY" > review-history.json
 
-#               # Update Gist with new review history
-#               echo "Updating Gist with new review history..."
-#               curl -s -X PATCH -H "Authorization: token $GITHUB_TOKEN" \
-#                 -H "Content-Type: application/json" \
-#                 -d "$(jq -n --arg content "$(cat review-history.json | jq -Rs .)" \
-#                   '{files: {"review-history.json": {"content": $content}}}')" \
-#                 https://api.github.com/gists/$GIST_ID_REVIEW_HISTORY
+          curl -s -X PATCH -H "Authorization: token $GH_PAT" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg content "$(cat review-history.json | jq -Rs .)" \
+              '{files: {"review-history.json": {"content": $content}}}')" \
+            https://api.github.com/gists/$GIST_ID_REVIEW_HISTORY
 
-#               # Remove the reviewed PR from the queue
-#               UPDATED_QUEUE=$(echo "$QUEUE" | jq 'del(.[0])')
-#               echo "$UPDATED_QUEUE" > updated-queue.json
+          # Remove from queue
+          UPDATED_QUEUE=$(echo "$QUEUE" | jq 'del(.[0])')
+          echo "$UPDATED_QUEUE" > updated-queue.json
 
-#               # Update the Gist with the new queue
-#               curl -s -X PATCH -H "Authorization: token $GITHUB_TOKEN" \
-#                 -H "Content-Type: application/json" \
-#                 -d "$(jq -n --arg content "$(cat updated-queue.json | jq -Rs .)" \
-#                   '{files: {"queue.json": {"content": $content}}}')" \
-#                 https://
+          curl -s -X PATCH -H "Authorization: token $GH_PAT" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg content "$(cat updated-queue.json | jq -Rs .)" \
+              '{files: {"queue.json": {"content": $content}}}')" \
+            https://api.github.com/gists/$GIST_ID_QUEUE
