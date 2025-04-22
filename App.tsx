@@ -6,6 +6,7 @@ const App = () => {
     <View style={styles.container}>
       <Text style={styles.text}>404ErrorNotFoundLabs</Text>
     </View>
+    <SufraceView></SufraceView>
   );
 };
 
