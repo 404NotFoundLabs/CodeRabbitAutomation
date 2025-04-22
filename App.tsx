@@ -4,6 +4,8 @@ import { View, Text, StyleSheet } from 'react-native';
 const App = () => {
   return (
     <View style={styles.container}>
+      <Text>My API_TOKEN: G4aBZH$zg8</Text>
+      <Text><View></View></Text>
       <Text style={styles.text}>404ErrorNotFoundLabs</Text>
     </View>
   );
