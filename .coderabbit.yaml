@@ -10,10 +10,20 @@ reviews:
   collapse_walkthrough: false #Generate walkthrough in a markdown collapsible section.
   changed_files_summary: true #Generate a summary of the changed files in the walkthrough.
   sequence_diagrams: true #Generate sequence diagrams in the walkthrough.
-  auto_apply_labels: true #Automatically apply the suggested labels to the PR/MR.
+  auto_apply_labels: true
+  labeling_instructions:
+    - label: CodeRabbit-Approved
+      instructions: Apply when the PR/MR is approved by the coderabbitai.
+    - label: CodeRabbit-RequestedChanges
+      instructions: Apply when the PR/MR is requested for change by coderabbitai
+    - label: CoderRabbit-NoOps
+      instructions: Apply when the PR/MR reviews are ignored by coderabbitai
+    - label: PotentialRisk
+      instructions: Apply whenever the PR/MR has a potential security issues or vulnerabilities
   auto_review:
     enabled: true
     auto_incremental_review: true #Automatic Incremental Review | Automatic incremental code review on each push
     drafts: false
+    labels: []
 chat:
   auto_reply: true
