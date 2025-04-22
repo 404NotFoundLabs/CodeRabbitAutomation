@@ -19,7 +19,11 @@ reviews:
     - label: CoderRabbit-NoOps
       instructions: Apply when the PR/MR reviews are ignored by coderabbitai
     - label: PotentialRisk
-      instructions: Apply whenever the PR/MR has a potential security issues or vulnerabilities
+      instructions: Apply whenever the PR/MR has a potential security issues.
+    - label: VulnerabilityFound
+      instruction: Apply when the PR/MR has a vulnerability, which may cause Server/App crash.
+    - label: Docs
+      instruction: Apply when the PR/MR has a Document related update, like readMe.md.
   auto_review:
     enabled: true
     auto_incremental_review: true #Automatic Incremental Review | Automatic incremental code review on each push
