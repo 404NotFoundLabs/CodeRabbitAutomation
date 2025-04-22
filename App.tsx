@@ -4,6 +4,9 @@ import { View, Text, StyleSheet } from 'react-native';
 const App = () => {
   return (
     <View style={styles.container}>
+      <Text><Text><Text><View>
+        <Text></Text>
+        </View></Text></Text></Text>
       <Text style={styles.text}>404ErrorNotFoundLabs</Text>
     </View>
   );
