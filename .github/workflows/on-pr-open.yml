@@ -40,11 +40,17 @@ jobs:
           UPDATED_QUEUE=$(echo "$QUEUE" | jq ". + [{\"pr\": \"$PR_NUMBER\", \"repo\": \"$REPO\"}]")
           echo "$UPDATED_QUEUE" > updated-queue.json
 
-          # Update the Gist with the new queue
-          curl -s -X PATCH -H "Authorization: token $GH_PAT" \
+          # Update the Gist with the new queue, and fail if it doesn't succeed
+          RESPONSE=$(curl -s -w "%{http_code}" -o response.json -X PATCH -H "Authorization: token $GH_PAT" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg content "$(cat updated-queue.json | jq -Rs .)" \
               '{files: {"queue.json": {"content": $content}}}')" \
-            https://api.github.com/gists/$GIST_ID_QUEUE
+            https://api.github.com/gists/$GIST_ID_QUEUE)
 
-          echo "Queue updated successfully!"
+          if [ "$RESPONSE" -ne 200 ]; then
+            echo "❌ Failed to update the Gist. Response code: $RESPONSE"
+            cat response.json
+            exit 1
+          fi
+
+          echo "✅ Queue updated successfully!"
