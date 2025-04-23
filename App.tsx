@@ -5,6 +5,7 @@ const App = () => {
   return (
     <View style={styles.container}>
       <Text style={styles.text}>404ErrorNotFoundLabs</Text>
+      <Text><View><Text></Text></View></Text>
     </View>
   );
 };
