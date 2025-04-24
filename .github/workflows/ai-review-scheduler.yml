@@ -3,71 +3,96 @@ name: Review PRs Scheduler
 on:
   schedule:
     - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   trigger-review:
     runs-on: ubuntu-latest
     steps:
-      - name: Process Review Queue using Sliding Window
+      - name: Process Review Queue
         env:
-          GH_PAT: ${{ secrets.GOWREESH_TOKEN }}
+          GH_PAT: ${{ secrets.GOWRESSH_TOKEN }}
           GIST_ID_QUEUE: ${{ secrets.GIST_ID_QUEUE }}
           GIST_ID_REVIEW_HISTORY: ${{ secrets.GIST_ID_REVIEW_HISTORY }}
         run: |
-          echo "Fetching queue and review history..."
-          curl -s -H "Authorization: token $GH_PAT" https://api.github.com/gists/$GIST_ID_QUEUE > gist_queue.json
-          curl -s -H "Authorization: token $GH_PAT" https://api.github.com/gists/$GIST_ID_REVIEW_HISTORY > gist_history.json
+          # Fetch current data
+          echo "Fetching queue and history..."
+          curl -s -H "Authorization: token $GH_PAT" "https://api.github.com/gists/$GIST_ID_QUEUE" > gist_queue.json
+          curl -s -H "Authorization: token $GH_PAT" "https://api.github.com/gists/$GIST_ID_REVIEW_HISTORY" > gist_history.json
 
-          QUEUE=$(jq -r '.files["queue.json"].content' gist_queue.json | jq '.')
-          HISTORY=$(jq -r '.files["review-history.json"].content' gist_history.json | jq '.')
+          # Parse and validate queue
+          QUEUE_CONTENT=$(jq -r '.files["queue.json"].content // ""' gist_queue.json | tr -d "\n" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          if [[ -z "$QUEUE_CONTENT" || "$QUEUE_CONTENT" == "null" ]]; then
+            QUEUE="[]"
+          else
+            QUEUE=$(echo "$QUEUE_CONTENT" | jq -c '.')
+          fi
 
+          # Parse and validate history
+          HISTORY_CONTENT=$(jq -r '.files["review-history.json"].content // ""' gist_history.json | tr -d "\n" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          if [[ -z "$HISTORY_CONTENT" || "$HISTORY_CONTENT" == "null" ]]; then
+            HISTORY="[]"
+          else
+            HISTORY=$(echo "$HISTORY_CONTENT" | jq -c '.')
+          fi
+
+          # Calculate available slots
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           ONE_HOUR_AGO=$(date -u -d "1 hour ago" +"%Y-%m-%dT%H:%M:%SZ")
-
-          RECENT_HISTORY=$(echo "$HISTORY" | jq "[.[] | select(.timestamp >= \"$ONE_HOUR_AGO\")]")
-          REVIEWED_COUNT=$(echo "$RECENT_HISTORY" | jq length)
-
+          RECENT_REVIEWS=$(echo "$HISTORY" | jq -c "[.[] | select(.timestamp >= \"$ONE_HOUR_AGO\")]")
+          REVIEWED_COUNT=$(echo "$RECENT_REVIEWS" | jq -c 'length')
           SLOTS_LEFT=$((4 - REVIEWED_COUNT))
-          echo "Slots available: $SLOTS_LEFT"
+
+          echo "Reviews in last hour: $REVIEWED_COUNT"
+          echo "Available slots: $SLOTS_LEFT"
 
           if [ "$SLOTS_LEFT" -le 0 ]; then
-            echo "Sliding window full. Waiting..."
+            echo "No available slots in sliding window"
             exit 0
           fi
 
-          PRS_TO_REVIEW=$(echo "$QUEUE" | jq ".[:$SLOTS_LEFT]")
-          REMAINING_QUEUE=$(echo "$QUEUE" | jq ".[$SLOTS_LEFT:]")
+          # Sort queue by oldest first and select PRs to review
+          SORTED_QUEUE=$(echo "$QUEUE" | jq -c 'sort_by(.queued_at)')
+          PRS_TO_REVIEW=$(echo "$SORTED_QUEUE" | jq -c ".[:$SLOTS_LEFT]")
+          REMAINING_QUEUE=$(echo "$SORTED_QUEUE" | jq -c ".[$SLOTS_LEFT:]")
 
-          if [ "$(echo "$PRS_TO_REVIEW" | jq length)" -eq 0 ]; then
-            echo "No PRs to review."
+          if [ "$(echo "$PRS_TO_REVIEW" | jq -c 'length')" -eq 0 ]; then
+            echo "No PRs in queue to review"
             exit 0
           fi
 
-          UPDATED_HISTORY="$RECENT_HISTORY"
+          # Process reviews
+          UPDATED_HISTORY="$RECENT_REVIEWS"
           for row in $(echo "$PRS_TO_REVIEW" | jq -c '.[]'); do
             PR_NUMBER=$(echo "$row" | jq -r '.pr')
             REPO=$(echo "$row" | jq -r '.repo')
 
-            echo "Posting review to $REPO PR #$PR_NUMBER"
+            echo "Triggering review for $REPO PR #$PR_NUMBER"
+            
+            # Post review comment
             curl -s -X POST -H "Authorization: token $GH_PAT" \
               -H "Content-Type: application/json" \
               -d '{"body": "@coderabbitai review"}' \
               "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments"
 
-            REVIEW_ENTRY=$(jq -n --arg pr "$PR_NUMBER" --arg timestamp "$NOW" '{pr: $pr, timestamp: $timestamp}')
-            UPDATED_HISTORY=$(echo "$UPDATED_HISTORY" | jq ". + [ $REVIEW_ENTRY ]")
+            # Add to history
+            REVIEW_ENTRY=$(jq -n --arg pr "$PR_NUMBER" --arg repo "$REPO" --arg timestamp "$NOW" \
+              '{pr: $pr, repo: $repo, timestamp: $timestamp}')
+            UPDATED_HISTORY=$(echo "$UPDATED_HISTORY" | jq -c ". + [$REVIEW_ENTRY]")
           done
 
+          # Update history Gist
           echo "$UPDATED_HISTORY" > review-history.json
           curl -s -X PATCH -H "Authorization: token $GH_PAT" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg content "$(cat review-history.json | jq -Rs .)" \
-              '{files: {"review-history.json": {"content": $content}}}')" \
-            https://api.github.com/gists/$GIST_ID_REVIEW_HISTORY
+            -d "$(jq -n --arg content "$(cat review-history.json)" '{files: {"review-history.json": {"content": $content}}}')" \
+            "https://api.github.com/gists/$GIST_ID_REVIEW_HISTORY"
 
+          # Update queue Gist
           echo "$REMAINING_QUEUE" > updated-queue.json
           curl -s -X PATCH -H "Authorization: token $GH_PAT" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg content "$(cat updated-queue.json | jq -Rs .)" \
-              '{files: {"queue.json": {"content": $content}}}')" \
-            https://api.github.com/gists/$GIST_ID_QUEUE
+            -d "$(jq -n --arg content "$(cat updated-queue.json)" '{files: {"queue.json": {"content": $content}}}')" \
+            "https://api.github.com/gists/$GIST_ID_QUEUE"
+
+          echo "✅ Successfully processed $SLOTS_LEFT PR(s)"

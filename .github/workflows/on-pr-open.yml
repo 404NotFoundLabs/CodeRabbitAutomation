@@ -15,42 +15,47 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # Fetch current queue
           echo "Fetching Gist content..."
-          curl -s -H "Authorization: token $GH_PAT" https://api.github.com/gists/$GIST_ID_QUEUE > gist.json
+          curl -s -H "Authorization: token $GH_PAT" "https://api.github.com/gists/$GIST_ID_QUEUE" > gist.json
 
-          # Try to extract the content of queue.json, fallback to empty string if it doesn't exist
-          QUEUE_CONTENT=$(jq -r '.files["queue.json"].content // ""' gist.json)
+          # Extract and validate queue content
+          QUEUE_CONTENT=$(jq -r '.files["queue.json"].content // ""' gist.json | tr -d "\n" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-          if [ -z "$QUEUE_CONTENT" ] || [ "$QUEUE_CONTENT" == "null" ]; then
-            echo "queue.json is missing or empty. Initializing with an empty array."
+          if [[ -z "$QUEUE_CONTENT" || "$QUEUE_CONTENT" == "null" || "$QUEUE_CONTENT" == "\"\"" || "$QUEUE_CONTENT" == "\"\\n\"" ]]; then
+            echo "Initializing with empty queue"
+            QUEUE="[]"
+          elif ! echo "$QUEUE_CONTENT" | jq -e . >/dev/null 2>&1; then
+            echo "Invalid JSON content, initializing with empty queue"
             QUEUE="[]"
           else
-            QUEUE=$(echo "$QUEUE_CONTENT" | jq '.')
+            QUEUE=$(echo "$QUEUE_CONTENT" | jq -c .)
           fi
 
-          # Check if the PR already exists in the queue
-          EXISTS=$(echo "$QUEUE" | jq "[.[] | select(.pr == \"$PR_NUMBER\" and .repo == \"$REPO\")] | length")
+          # Check if PR already exists in queue
+          EXISTS=$(echo "$QUEUE" | jq -c "[.[] | select(.pr == \"$PR_NUMBER\" and .repo == \"$REPO\")] | length")
 
           if [ "$EXISTS" -ne 0 ]; then
-            echo "PR already in queue."
+            echo "PR already in queue"
             exit 0
           fi
 
-          # Add the new PR to the queue
-          UPDATED_QUEUE=$(echo "$QUEUE" | jq ". + [{\"pr\": \"$PR_NUMBER\", \"repo\": \"$REPO\"}]")
+          # Add PR to queue with timestamp
+          PR_ENTRY=$(jq -n --arg pr "$PR_NUMBER" --arg repo "$REPO" '{pr: $pr, repo: $repo, queued_at: (now|todate)}')
+          UPDATED_QUEUE=$(echo "$QUEUE" | jq -c ". + [$PR_ENTRY]")
           echo "$UPDATED_QUEUE" > updated-queue.json
 
-          # Update the Gist with the new queue, and fail if it doesn't succeed
-          RESPONSE=$(curl -s -w "%{http_code}" -o response.json -X PATCH -H "Authorization: token $GH_PAT" \
+          # Update Gist
+          RESPONSE=$(curl -s -w "%{http_code}" -o response.json -X PATCH \
+            -H "Authorization: token $GH_PAT" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg content "$(cat updated-queue.json | jq -Rs .)" \
-              '{files: {"queue.json": {"content": $content}}}')" \
-            https://api.github.com/gists/$GIST_ID_QUEUE)
+            -d "$(jq -n --arg content "$(cat updated-queue.json)" '{files: {"queue.json": {"content": $content}}}')" \
+            "https://api.github.com/gists/$GIST_ID_QUEUE")
 
           if [ "$RESPONSE" -ne 200 ]; then
-            echo "❌ Failed to update the Gist. Response code: $RESPONSE"
+            echo "❌ Failed to update queue Gist. HTTP $RESPONSE"
             cat response.json
             exit 1
           fi
 
-          echo "✅ Queue updated successfully!"
+          echo "✅ PR $REPO#$PR_NUMBER added to queue"
